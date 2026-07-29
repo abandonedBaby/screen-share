@@ -75,8 +75,13 @@
       peer.on('open', () => {
         statusText.innerText = 'Connecting to host stream...';
         
-        const emptyStream = new MediaStream();
-        const call = peer.call(hostId, emptyStream);
+        // Create a 1px dummy video track so WebRTC SDP creates the 'm=video' media section
+        const canvas = document.createElement('canvas');
+        canvas.width = 1;
+        canvas.height = 1;
+        const dummyStream = canvas.captureStream(1);
+
+        const call = peer.call(hostId, dummyStream);
 
         if (!call) {
           statusText.innerText = 'Failed to reach host ID.';
@@ -87,7 +92,6 @@
           statusText.innerText = 'Stream received! Loading video...';
           videoEl.srcObject = remoteStream;
 
-          // Wait until video metadata (resolution) is parsed before playing
           videoEl.onloadedmetadata = () => {
             videoEl.play().then(() => {
               statusEl.style.display = 'none';
