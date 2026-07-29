@@ -2,14 +2,19 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0, user-scalable=yes">
   <title>Screen Share Viewer</title>
   <style>
-    body {
+    * {
+      box-sizing: border-box;
       margin: 0;
-      background-color: #0d0d0d;
-      color: #ffffff;
-      font-family: system-ui, -apple-system, sans-serif;
+      padding: 0;
+    }
+
+    body {
+      background-color: #0b0f17;
+      color: #f8fafc;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
       display: flex;
       flex-direction: column;
       align-items: center;
@@ -26,7 +31,8 @@
       display: flex;
       align-items: center;
       justify-content: center;
-      touch-action: none; /* Disables default mobile pull-to-refresh & browser scrolling */
+      touch-action: none; /* Disables default mobile pull-to-refresh & browser scrolling during pan */
+      background-color: #000000;
     }
 
     video {
@@ -36,6 +42,7 @@
       transform-origin: center center;
       cursor: grab;
       transition: transform 0.05s linear;
+      will-change: transform;
     }
 
     video:active {
@@ -44,13 +51,16 @@
 
     .status-card {
       position: absolute;
-      background: #1e293b;
-      padding: 16px 24px;
-      border-radius: 8px;
+      background: rgba(30, 41, 59, 0.95);
+      padding: 20px 28px;
+      border-radius: 12px;
       text-align: center;
-      max-width: 80%;
+      max-width: 85%;
       word-break: break-word;
       z-index: 20;
+      box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.5), 0 8px 10px -6px rgba(0, 0, 0, 0.3);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      backdrop-filter: blur(8px);
     }
 
     .controls-overlay {
@@ -61,10 +71,13 @@
       gap: 8px;
       z-index: 30;
       background: rgba(15, 23, 42, 0.85);
-      padding: 8px;
-      border-radius: 8px;
-      backdrop-filter: blur(8px);
-      box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+      padding: 8px 12px;
+      border-radius: 10px;
+      backdrop-filter: blur(12px);
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      box-shadow: 0 10px 20px rgba(0, 0, 0, 0.5);
+      flex-wrap: wrap;
+      justify-content: center;
     }
 
     .btn {
@@ -74,14 +87,47 @@
       border: none;
       border-radius: 6px;
       font-weight: 600;
-      font-size: 0.9rem;
+      font-size: 0.85rem;
       cursor: pointer;
       user-select: none;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 4px;
+      transition: background 0.15s ease, transform 0.05s ease;
     }
 
-    .btn:hover { background: #1d4ed8; }
-    .btn-reset { background: #374151; }
-    .btn-reset:hover { background: #4b5563; }
+    .btn:hover {
+      background: #1d4ed8;
+    }
+
+    .btn:active {
+      transform: scale(0.96);
+    }
+
+    .btn-secondary {
+      background: #334155;
+    }
+
+    .btn-secondary:hover {
+      background: #475569;
+    }
+
+    @media (max-width: 600px) {
+      .controls-overlay {
+        bottom: 16px;
+        right: 50%;
+        transform: translateX(50%);
+        width: calc(100% - 32px);
+        max-width: 380px;
+      }
+      
+      .btn {
+        padding: 10px 12px;
+        font-size: 0.8rem;
+        flex: 1;
+      }
+    }
   </style>
   <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
 </head>
@@ -90,15 +136,18 @@
   <div id="viewport">
     <div id="status" class="status-card">
       <div id="statusText">Initializing viewer...</div>
-      <button id="playBtn" class="btn" style="display: none; margin-top: 12px;">Tap to Play Stream</button>
+      <button id="playBtn" class="btn" style="display: none; margin-top: 14px;">Tap to Play Stream</button>
     </div>
 
+    <!-- Muted initial playback required for mobile autoplay compliance -->
     <video id="remoteVideo" autoplay playsinline muted style="display: none;"></video>
 
-    <!-- Floating Zoom Control Bar -->
+    <!-- Floating Control Bar -->
     <div id="controls" class="controls-overlay" style="display: none;">
+      <button id="muteBtn" class="btn btn-secondary">🔇 Unmute</button>
+      <button id="fullscreenBtn" class="btn btn-secondary">⛶ Fullscreen</button>
       <button id="zoomOut" class="btn">-</button>
-      <button id="zoomReset" class="btn btn-reset">100%</button>
+      <button id="zoomReset" class="btn btn-secondary">100%</button>
       <button id="zoomIn" class="btn">+</button>
     </div>
   </div>
@@ -110,14 +159,17 @@
     const videoEl = document.getElementById('remoteVideo');
     const controlsEl = document.getElementById('controls');
     const viewport = document.getElementById('viewport');
+    const muteBtn = document.getElementById('muteBtn');
+    const fullscreenBtn = document.getElementById('fullscreenBtn');
 
-    // --- WebRTC PeerJS Logic ---
+    // Parse Host ID from URL parameters
     const urlParams = new URLSearchParams(window.location.search);
     const hostId = urlParams.get('id');
 
     if (!hostId) {
       statusText.innerText = 'Error: Missing Host ID in URL parameters.';
     } else {
+      // Configure STUN servers for cross-network NAT/firewall traversal
       const peer = new Peer({
         config: {
           iceServers: [
@@ -130,6 +182,7 @@
       peer.on('open', () => {
         statusText.innerText = 'Connecting to host stream...';
         
+        // Generate a 1px offscreen video track to ensure proper WebRTC SDP m=video negotiation
         const canvas = document.createElement('canvas');
         canvas.width = 1;
         canvas.height = 1;
@@ -152,7 +205,8 @@
               videoEl.style.display = 'block';
               controlsEl.style.display = 'flex';
             }).catch(err => {
-              statusText.innerText = 'Stream ready! Click below to start playing:';
+              console.warn('Autoplay prevented:', err);
+              statusText.innerText = 'Stream ready! Tap below to start playing:';
               playBtn.style.display = 'inline-block';
             });
           };
@@ -178,7 +232,6 @@
       });
     }
 
-    // --- Zoom & Pan Client Logic ---
     let scale = 1;
     let pointX = 0, pointY = 0;
     let startX = 0, startY = 0;
@@ -186,7 +239,6 @@
     let initialPinchDistance = null;
 
     function applyTransform() {
-      // Clamp bounds so video doesn't drag completely offscreen
       const maxScale = 5;
       const minScale = 1;
       scale = Math.min(Math.max(minScale, scale), maxScale);
@@ -200,7 +252,7 @@
       document.getElementById('zoomReset').innerText = `${Math.round(scale * 100)}%`;
     }
 
-    // 1. Mouse Wheel Zooming
+    // 1. Mouse Wheel Zoom
     viewport.addEventListener('wheel', (e) => {
       e.preventDefault();
       const zoomFactor = e.deltaY < 0 ? 1.15 : 0.85;
@@ -208,7 +260,7 @@
       applyTransform();
     }, { passive: false });
 
-    // 2. Drag to Pan (Mouse & Touch single finger)
+    // 2. Drag Pan Logic
     function startPan(e) {
       if (scale <= 1) return;
       isDragging = true;
@@ -235,7 +287,7 @@
     window.addEventListener('mousemove', movePan);
     window.addEventListener('mouseup', stopPan);
 
-    // 3. Touch Pinch-to-Zoom (Mobile)
+    // 3. Mobile Touch Pinch-to-Zoom & Pan
     viewport.addEventListener('touchstart', (e) => {
       if (e.touches.length === 2) {
         initialPinchDistance = Math.hypot(
@@ -267,7 +319,45 @@
       initialPinchDistance = null;
     });
 
-    // 4. On-Screen UI Controls
+    // Audio Toggle Handler
+    muteBtn.addEventListener('click', () => {
+      videoEl.muted = !videoEl.muted;
+      if (videoEl.muted) {
+        muteBtn.innerText = '🔇 Unmute';
+        muteBtn.classList.add('btn-secondary');
+      } else {
+        muteBtn.innerText = '🔊 Mute';
+        muteBtn.classList.remove('btn-secondary');
+      }
+    });
+
+    // Fullscreen Toggle Handler (with Safari/iOS fallback)
+    fullscreenBtn.addEventListener('click', () => {
+      if (!document.fullscreenElement && !document.webkitFullscreenElement) {
+        if (viewport.requestFullscreen) {
+          viewport.requestFullscreen();
+        } else if (videoEl.webkitEnterFullscreen) {
+          videoEl.webkitEnterFullscreen(); // iOS Safari native video player fallback
+        }
+      } else {
+        if (document.exitFullscreen) {
+          document.exitFullscreen();
+        } else if (document.webkitExitFullscreen) {
+          document.webkitExitFullscreen();
+        }
+      }
+    });
+
+    // Update Fullscreen Button text dynamically
+    document.addEventListener('fullscreenchange', () => {
+      if (document.fullscreenElement) {
+        fullscreenBtn.innerText = '⛶ Exit Fullscreen';
+      } else {
+        fullscreenBtn.innerText = '⛶ Fullscreen';
+      }
+    });
+
+    // Zoom Buttons
     document.getElementById('zoomIn').addEventListener('click', () => {
       scale *= 1.25;
       applyTransform();
