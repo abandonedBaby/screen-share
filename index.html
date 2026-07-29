@@ -29,23 +29,39 @@
       max-width: 80%;
       word-break: break-word;
     }
+    button {
+      margin-top: 12px;
+      padding: 10px 20px;
+      background: #2563eb;
+      color: white;
+      border: none;
+      border-radius: 6px;
+      font-weight: 600;
+      cursor: pointer;
+    }
   </style>
   <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
 </head>
 <body>
 
-  <div id="status" class="status-card">Initializing viewer...</div>
+  <div id="status" class="status-card">
+    <div id="statusText">Initializing viewer...</div>
+    <button id="playBtn" style="display: none;">Tap to Play Stream</button>
+  </div>
+
   <video id="remoteVideo" autoplay playsinline muted controls style="display: none;"></video>
 
   <script>
     const statusEl = document.getElementById('status');
+    const statusText = document.getElementById('statusText');
+    const playBtn = document.getElementById('playBtn');
     const videoEl = document.getElementById('remoteVideo');
 
     const urlParams = new URLSearchParams(window.location.search);
     const hostId = urlParams.get('id');
 
     if (!hostId) {
-      statusEl.innerText = 'Error: Missing Host ID in URL parameters.';
+      statusText.innerText = 'Error: Missing Host ID in URL parameters.';
     } else {
       const peer = new Peer({
         config: {
@@ -57,35 +73,48 @@
       });
 
       peer.on('open', () => {
-        statusEl.innerText = 'Connecting to host stream...';
+        statusText.innerText = 'Connecting to host stream...';
         
-        // Pass a dummy MediaStream so PeerJS initializes the connection correctly
         const emptyStream = new MediaStream();
         const call = peer.call(hostId, emptyStream);
 
         if (!call) {
-          statusEl.innerText = 'Failed to reach host ID.';
+          statusText.innerText = 'Failed to reach host ID.';
           return;
         }
 
         call.on('stream', (remoteStream) => {
+          statusText.innerText = 'Stream received! Loading video...';
+          videoEl.srcObject = remoteStream;
+
+          // Wait until video metadata (resolution) is parsed before playing
+          videoEl.onloadedmetadata = () => {
+            videoEl.play().then(() => {
+              statusEl.style.display = 'none';
+              videoEl.style.display = 'block';
+            }).catch(err => {
+              console.warn('Autoplay prevented:', err);
+              statusText.innerText = 'Stream ready! Click below to start playing:';
+              playBtn.style.display = 'inline-block';
+            });
+          };
+        });
+
+        playBtn.addEventListener('click', () => {
+          videoEl.play();
           statusEl.style.display = 'none';
           videoEl.style.display = 'block';
-          videoEl.srcObject = remoteStream;
-          
-          videoEl.play().catch(err => {
-            console.warn('Autoplay error:', err);
-          });
         });
 
         call.on('close', () => {
           statusEl.style.display = 'block';
           videoEl.style.display = 'none';
-          statusEl.innerText = 'Stream session ended by host.';
+          playBtn.style.display = 'none';
+          statusText.innerText = 'Stream session ended by host.';
         });
 
         peer.on('error', (err) => {
-          statusEl.innerText = `Connection error: ${err.type || err}`;
+          statusText.innerText = `Connection error: ${err.type || err}`;
         });
       });
     }
