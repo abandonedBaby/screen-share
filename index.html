@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Screen Share Viewer</title>
+  <style>
+    body {
+      margin: 0;
+      background-color: #0d0d0d;
+      color: #ffffff;
+      font-family: system-ui, -apple-system, sans-serif;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      overflow: hidden;
+    }
+    video {
+      width: 100vw;
+      height: 100vh;
+      object-fit: contain;
+    }
+    .status-card {
+      background: #1e293b;
+      padding: 16px 24px;
+      border-radius: 8px;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+      text-align: center;
+    }
+  </style>
+  <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+</head>
+<body>
+
+  <div id="status" class="status-card">Initializing viewer...</div>
+  <video id="remoteVideo" autoplay playsinline controls style="display: none;"></video>
+
+  <script>
+    const statusEl = document.getElementById('status');
+    const videoEl = document.getElementById('remoteVideo');
+
+    const urlParams = new URLSearchParams(window.location.search);
+    const hostId = urlParams.get('id');
+
+    if (!hostId) {
+      statusEl.innerText = 'Error: Missing Host ID in URL parameters.';
+    } else {
+      const peer = new Peer();
+
+      peer.on('open', () => {
+        statusEl.innerText = 'Connecting to host stream...';
+        const call = peer.call(hostId);
+
+        call.on('stream', (remoteStream) => {
+          statusEl.style.display = 'none';
+          videoEl.style.display = 'block';
+          videoEl.srcObject = remoteStream;
+        });
+
+        call.on('close', () => {
+          statusEl.style.display = 'block';
+          videoEl.style.display = 'none';
+          statusEl.innerText = 'Stream session ended by host.';
+        });
+
+        peer.on('error', (err) => {
+          statusEl.innerText = `Connection failed: ${err.type}`;
+        });
+      });
+    }
+  </script>
+</body>
+</html>
