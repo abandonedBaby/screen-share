@@ -15,48 +15,103 @@
       align-items: center;
       justify-content: center;
       min-height: 100vh;
+      overflow: hidden;
     }
+
+    #viewport {
+      width: 100vw;
+      height: 100vh;
+      overflow: hidden;
+      position: relative;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      touch-action: none; /* Disables default mobile pull-to-refresh & browser scrolling */
+    }
+
     video {
       width: 100vw;
       height: 100vh;
       object-fit: contain;
+      transform-origin: center center;
+      cursor: grab;
+      transition: transform 0.05s linear;
     }
+
+    video:active {
+      cursor: grabbing;
+    }
+
     .status-card {
+      position: absolute;
       background: #1e293b;
       padding: 16px 24px;
       border-radius: 8px;
       text-align: center;
       max-width: 80%;
       word-break: break-word;
+      z-index: 20;
     }
-    button {
-      margin-top: 12px;
-      padding: 10px 20px;
+
+    .controls-overlay {
+      position: absolute;
+      bottom: 24px;
+      right: 24px;
+      display: flex;
+      gap: 8px;
+      z-index: 30;
+      background: rgba(15, 23, 42, 0.85);
+      padding: 8px;
+      border-radius: 8px;
+      backdrop-filter: blur(8px);
+      box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+    }
+
+    .btn {
+      padding: 8px 14px;
       background: #2563eb;
       color: white;
       border: none;
       border-radius: 6px;
       font-weight: 600;
+      font-size: 0.9rem;
       cursor: pointer;
+      user-select: none;
     }
+
+    .btn:hover { background: #1d4ed8; }
+    .btn-reset { background: #374151; }
+    .btn-reset:hover { background: #4b5563; }
   </style>
   <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
 </head>
 <body>
 
-  <div id="status" class="status-card">
-    <div id="statusText">Initializing viewer...</div>
-    <button id="playBtn" style="display: none;">Tap to Play Stream</button>
-  </div>
+  <div id="viewport">
+    <div id="status" class="status-card">
+      <div id="statusText">Initializing viewer...</div>
+      <button id="playBtn" class="btn" style="display: none; margin-top: 12px;">Tap to Play Stream</button>
+    </div>
 
-  <video id="remoteVideo" autoplay playsinline muted controls style="display: none;"></video>
+    <video id="remoteVideo" autoplay playsinline muted style="display: none;"></video>
+
+    <!-- Floating Zoom Control Bar -->
+    <div id="controls" class="controls-overlay" style="display: none;">
+      <button id="zoomOut" class="btn">-</button>
+      <button id="zoomReset" class="btn btn-reset">100%</button>
+      <button id="zoomIn" class="btn">+</button>
+    </div>
+  </div>
 
   <script>
     const statusEl = document.getElementById('status');
     const statusText = document.getElementById('statusText');
     const playBtn = document.getElementById('playBtn');
     const videoEl = document.getElementById('remoteVideo');
+    const controlsEl = document.getElementById('controls');
+    const viewport = document.getElementById('viewport');
 
+    // --- WebRTC PeerJS Logic ---
     const urlParams = new URLSearchParams(window.location.search);
     const hostId = urlParams.get('id');
 
@@ -75,7 +130,6 @@
       peer.on('open', () => {
         statusText.innerText = 'Connecting to host stream...';
         
-        // Create a 1px dummy video track so WebRTC SDP creates the 'm=video' media section
         const canvas = document.createElement('canvas');
         canvas.width = 1;
         canvas.height = 1;
@@ -96,8 +150,8 @@
             videoEl.play().then(() => {
               statusEl.style.display = 'none';
               videoEl.style.display = 'block';
+              controlsEl.style.display = 'flex';
             }).catch(err => {
-              console.warn('Autoplay prevented:', err);
               statusText.innerText = 'Stream ready! Click below to start playing:';
               playBtn.style.display = 'inline-block';
             });
@@ -108,12 +162,13 @@
           videoEl.play();
           statusEl.style.display = 'none';
           videoEl.style.display = 'block';
+          controlsEl.style.display = 'flex';
         });
 
         call.on('close', () => {
           statusEl.style.display = 'block';
           videoEl.style.display = 'none';
-          playBtn.style.display = 'none';
+          controlsEl.style.display = 'none';
           statusText.innerText = 'Stream session ended by host.';
         });
 
@@ -122,6 +177,113 @@
         });
       });
     }
+
+    // --- Zoom & Pan Client Logic ---
+    let scale = 1;
+    let pointX = 0, pointY = 0;
+    let startX = 0, startY = 0;
+    let isDragging = false;
+    let initialPinchDistance = null;
+
+    function applyTransform() {
+      // Clamp bounds so video doesn't drag completely offscreen
+      const maxScale = 5;
+      const minScale = 1;
+      scale = Math.min(Math.max(minScale, scale), maxScale);
+
+      if (scale === 1) {
+        pointX = 0;
+        pointY = 0;
+      }
+
+      videoEl.style.transform = `translate(${pointX}px, ${pointY}px) scale(${scale})`;
+      document.getElementById('zoomReset').innerText = `${Math.round(scale * 100)}%`;
+    }
+
+    // 1. Mouse Wheel Zooming
+    viewport.addEventListener('wheel', (e) => {
+      e.preventDefault();
+      const zoomFactor = e.deltaY < 0 ? 1.15 : 0.85;
+      scale *= zoomFactor;
+      applyTransform();
+    }, { passive: false });
+
+    // 2. Drag to Pan (Mouse & Touch single finger)
+    function startPan(e) {
+      if (scale <= 1) return;
+      isDragging = true;
+      const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+      const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+      startX = clientX - pointX;
+      startY = clientY - pointY;
+    }
+
+    function movePan(e) {
+      if (!isDragging || scale <= 1) return;
+      const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+      const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+      pointX = clientX - startX;
+      pointY = clientY - startY;
+      applyTransform();
+    }
+
+    function stopPan() {
+      isDragging = false;
+    }
+
+    viewport.addEventListener('mousedown', startPan);
+    window.addEventListener('mousemove', movePan);
+    window.addEventListener('mouseup', stopPan);
+
+    // 3. Touch Pinch-to-Zoom (Mobile)
+    viewport.addEventListener('touchstart', (e) => {
+      if (e.touches.length === 2) {
+        initialPinchDistance = Math.hypot(
+          e.touches[0].clientX - e.touches[1].clientX,
+          e.touches[0].clientY - e.touches[1].clientY
+        );
+      } else if (e.touches.length === 1) {
+        startPan(e);
+      }
+    });
+
+    viewport.addEventListener('touchmove', (e) => {
+      if (e.touches.length === 2 && initialPinchDistance) {
+        const currentDistance = Math.hypot(
+          e.touches[0].clientX - e.touches[1].clientX,
+          e.touches[0].clientY - e.touches[1].clientY
+        );
+        const factor = currentDistance / initialPinchDistance;
+        scale *= factor > 1 ? 1.03 : 0.97;
+        initialPinchDistance = currentDistance;
+        applyTransform();
+      } else if (e.touches.length === 1) {
+        movePan(e);
+      }
+    });
+
+    viewport.addEventListener('touchend', () => {
+      stopPan();
+      initialPinchDistance = null;
+    });
+
+    // 4. On-Screen UI Controls
+    document.getElementById('zoomIn').addEventListener('click', () => {
+      scale *= 1.25;
+      applyTransform();
+    });
+
+    document.getElementById('zoomOut').addEventListener('click', () => {
+      scale /= 1.25;
+      applyTransform();
+    });
+
+    document.getElementById('zoomReset').addEventListener('click', () => {
+      scale = 1;
+      pointX = 0;
+      pointY = 0;
+      applyTransform();
+    });
   </script>
 </body>
 </html>
