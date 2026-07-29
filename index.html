@@ -35,7 +35,6 @@
 <body>
 
   <div id="status" class="status-card">Initializing viewer...</div>
-  <!-- Added 'muted' attribute required for mobile browser autoplay -->
   <video id="remoteVideo" autoplay playsinline muted controls style="display: none;"></video>
 
   <script>
@@ -48,7 +47,6 @@
     if (!hostId) {
       statusEl.innerText = 'Error: Missing Host ID in URL parameters.';
     } else {
-      // Configured with Google's public STUN servers for cross-network connections
       const peer = new Peer({
         config: {
           iceServers: [
@@ -60,7 +58,10 @@
 
       peer.on('open', () => {
         statusEl.innerText = 'Connecting to host stream...';
-        const call = peer.call(hostId);
+        
+        // Pass a dummy MediaStream so PeerJS initializes the connection correctly
+        const emptyStream = new MediaStream();
+        const call = peer.call(hostId, emptyStream);
 
         if (!call) {
           statusEl.innerText = 'Failed to reach host ID.';
